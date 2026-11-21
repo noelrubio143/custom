@@ -6,7 +6,7 @@ on:
       unpack_upx:
         description: Unpack UPX-packed binaries first
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -21,29 +21,32 @@ jobs:
       - name: Prepare assets
         run: |
           set -e
-          shopt -s nullglob
-          files=(server/custom-linux-*)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No binary found in server/ (example server/custom-linux-amd64)"
+          mkdir -p dist
+          count=0
+          for f in server/*; do
+            [ -f "$f" ] || continue
+            [ "$(basename "$f")" = "README.md" ] && continue
+            cp "$f" "dist/$(basename "$f")"
+            count=$((count+1))
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "No binary found in server/ (upload it there first)"
             exit 1
           fi
-          mkdir -p dist
-          for f in "${files[@]}"; do
-            cp "$f" "dist/$(basename "$f")"
-          done
+          ls -l dist
 
       - name: Unpack UPX
         if: ${{ inputs.unpack_upx }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq upx-ucl
-          for f in dist/custom-linux-*; do
+          for f in dist/*; do
             upx -d "$f" || echo "Skipped $f (not UPX packed or unsupported)"
           done
 
       - name: Checksums
         run: |
-          chmod +x dist/custom-linux-*
+          chmod +x dist/*
           cd dist
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
