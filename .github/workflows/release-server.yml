@@ -1,0 +1,59 @@
+name: Release Server Binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.4)"
+        required: true
+        default: "v1.4"
+      prerelease:
+        description: "Mark as pre-release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare assets
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(server/custom-linux-*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Walang binary sa server/ (hal. server/custom-linux-amd64)"
+            exit 1
+          fi
+          mkdir -p dist
+          for f in "${files[@]}"; do
+            cp "$f" "dist/$(basename "$f")"
+            chmod +x "dist/$(basename "$f")"
+          done
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -e
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            flag=""
+            if [ "$PRERELEASE" = "true" ]; then flag="--prerelease"; fi
+            gh release create "$TAG" dist/* \
+              --title "Custom Server $TAG" \
+              --notes "Prebuilt Linux server binaries. I-verify gamit ang SHA256SUMS.txt." \
+              $flag
+          fi
