@@ -1,35 +1,59 @@
-install_custom() {
-  local repo="noelrubio143/custom"
-  local tag="${1:-latest}"
-  local arch base tmp expected actual
+name: Release Server Binary
 
-  case "$(uname -m)" in
-    x86_64|amd64)  arch="amd64" ;;
-    aarch64|arm64) arch="arm64" ;;
-    *) echo "Hindi supported ang arch: $(uname -m)"; return 1 ;;
-  esac
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, example v1.4
+        required: true
+        default: v1.4
+      prerelease:
+        description: Mark as pre-release
+        type: boolean
+        default: false
 
-  if [ "$tag" = "latest" ]; then
-    base="https://github.com/$repo/releases/latest/download"
-  else
-    base="https://github.com/$repo/releases/download/$tag"
-  fi
+permissions:
+  contents: write
 
-  tmp=$(mktemp -d)
-  curl -fsSL "$base/custom-linux-$arch" -o "$tmp/custom" || { echo "Failed download"; return 1; }
-  curl -fsSL "$base/SHA256SUMS.txt" -o "$tmp/SHA256SUMS.txt" || { echo "Failed checksum download"; return 1; }
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  expected=$(grep " custom-linux-$arch\$" "$tmp/SHA256SUMS.txt" | awk '{print $1}')
-  actual=$(sha256sum "$tmp/custom" | awk '{print $1}')
-  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-    echo "Checksum mismatch, hindi ini-install"
-    rm -rf "$tmp"
-    return 1
-  fi
+      - name: Prepare assets
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(server/custom-linux-*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No binary found in server/ (example server/custom-linux-amd64)"
+            exit 1
+          fi
+          mkdir -p dist
+          for f in "${files[@]}"; do
+            cp "$f" "dist/$(basename "$f")"
+            chmod +x "dist/$(basename "$f")"
+          done
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-  install -m 755 "$tmp/custom" /usr/local/bin/custom
-  rm -rf "$tmp"
-  echo "custom installed: /usr/local/bin/custom"
-}
-
-install_custom        # o install_custom v1.4 para sa specific na tag
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -e
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            flag=""
+            if [ "$PRERELEASE" = "true" ]; then flag="--prerelease"; fi
+            gh release create "$TAG" dist/* \
+              --title "Custom Server $TAG" \
+              --notes "Prebuilt Linux server binaries. Verify with SHA256SUMS.txt." \
+              $flag
+          fi
