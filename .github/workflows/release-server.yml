@@ -3,20 +3,16 @@ name: Release Server Binary
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag, example v1.4
-        required: true
-        default: v1.4
-      prerelease:
-        description: Mark as pre-release
+      unpack_upx:
+        description: Unpack UPX-packed binaries first
         type: boolean
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,26 +30,27 @@ jobs:
           mkdir -p dist
           for f in "${files[@]}"; do
             cp "$f" "dist/$(basename "$f")"
-            chmod +x "dist/$(basename "$f")"
           done
+
+      - name: Unpack UPX
+        if: ${{ inputs.unpack_upx }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq upx-ucl
+          for f in dist/custom-linux-*; do
+            upx -d "$f" || echo "Skipped $f (not UPX packed or unsupported)"
+          done
+
+      - name: Checksums
+        run: |
+          chmod +x dist/custom-linux-*
           cd dist
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Create or update release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
-          PRERELEASE: ${{ inputs.prerelease }}
-        run: |
-          set -e
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-          else
-            flag=""
-            if [ "$PRERELEASE" = "true" ]; then flag="--prerelease"; fi
-            gh release create "$TAG" dist/* \
-              --title "Custom Server $TAG" \
-              --notes "Prebuilt Linux server binaries. Verify with SHA256SUMS.txt." \
-              $flag
-          fi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-server
+          path: dist/
+          retention-days: 30
